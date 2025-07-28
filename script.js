@@ -18,19 +18,31 @@ let gui = {
 };
 gui.init();
 
+// Image Preview
+const imageInput = document.getElementById("imageInput");
+const preview = document.getElementById("preview");
+imageInput.addEventListener("change", () => {
+    const file = imageInput.files[0];
+    if (file) {
+        preview.src = URL.createObjectURL(file);
+    }
+});
+
 // String Art Logic
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d");
 const svg = d3.select("#output");
+const status = document.getElementById("status");
 const width = 500;
 const height = 500;
 const nails = 100; // Number of nails on circular frame
-const maxLines = 1000; // Maximum string connections
+const maxLines = 2000; // Increased for fuller images
+const darkeningAmount = 1; // Smaller for more layers
 let nailSequence = [];
 
 function generateNailPositions() {
     const positions = [];
-    const radius = width / 2;
+    const radius = width / 2 - 10; // Slight inset for visibility
     const centerX = width / 2;
     const centerY = height / 2;
     for (let i = 0; i < nails; i++) {
@@ -50,28 +62,34 @@ function loadImage(file) {
             canvas.width = width;
             canvas.height = height;
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(ctx.getImageData(0, 0, width, height));
+            const imageData = ctx.getImageData(0, 0, width, height);
+            // Convert to grayscale for simplicity
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                const gray = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
+                imageData.data[i] = imageData.data[i + 1] = imageData.data[i + 2] = gray;
+            }
+            resolve(imageData);
         };
         img.src = URL.createObjectURL(file);
     });
 }
 
-function calculateError(imageData, line, currentImage) {
-    // Simplified error: sum of pixel differences along the line
-    const { x0, y0, x1, y1 } = line;
-    let error = 0;
-    const pixels = getLinePixels(x0, y0, x1, y1); // Bresenham’s algorithm (simplified)
+function calculateDelta(imageData, line, currentImage) {
+    // Calculate delta error improvement along the line
+    let delta = 0;
+    const pixels = getLinePixels(line.x0, line.y0, line.x1, line.y1);
     pixels.forEach(([px, py]) => {
         const idx = (Math.floor(py) * width + Math.floor(px)) * 4;
-        const original = imageData.data[idx]; // Grayscale (R channel)
-        const current = currentImage[idx] || 255; // Default to white
-        error += Math.abs(original - (current - 10)); // Simulate string darkening
+        const original = imageData.data[idx]; // Grayscale value (0 dark, 255 light)
+        const current = currentImage[idx] || 255;
+        const newValue = Math.max(0, current - darkeningAmount);
+        const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
+        delta += Math.min(0, improvement); // Ignore worsenings
     });
-    return error;
+    return delta;
 }
 
 function getLinePixels(x0, y0, x1, y1) {
-    // Simplified Bresenham’s line algorithm
     const pixels = [];
     const dx = Math.abs(x1 - x0);
     const dy = Math.abs(y1 - y0);
@@ -90,18 +108,19 @@ function getLinePixels(x0, y0, x1, y1) {
 }
 
 async function generateStringArt() {
-    const fileInput = document.getElementById("imageInput");
-    if (!fileInput.files[0]) {
+    const file = imageInput.files[0];
+    if (!file) {
         alert("Please upload an image!");
         return;
     }
 
+    status.textContent = "Generating...";
     // Clear previous output
     svg.selectAll("*").remove();
     nailSequence = [];
 
     // Load and process image
-    const imageData = await loadImage(fileInput.files[0]);
+    const imageData = await loadImage(file);
     const currentImage = new Uint8ClampedArray(width * height * 4).fill(255); // White background
     const nailPositions = generateNailPositions();
 
@@ -118,7 +137,7 @@ async function generateStringArt() {
     // Generate string art
     let currentNail = 0;
     for (let i = 0; i < maxLines; i++) {
-        let minError = Infinity;
+        let minDelta = 0; // Start at 0, since we want negative deltas
         let bestNail = -1;
         for (let j = 0; j < nails; j++) {
             if (j === currentNail) continue;
@@ -128,13 +147,13 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            const error = calculateError(imageData, line, currentImage);
-            if (error < minError) {
-                minError = error;
+            const delta = calculateDelta(imageData, line, currentImage);
+            if (delta < minDelta) {
+                minDelta = delta;
                 bestNail = j;
             }
         }
-        if (bestNail === -1) break;
+        if (bestNail === -1 || minDelta >= 0) break; // Stop if no improvement
 
         // Draw line
         svg.append("line")
@@ -143,9 +162,10 @@ async function generateStringArt() {
             .attr("x2", nailPositions[bestNail].x)
             .attr("y2", nailPositions[bestNail].y)
             .attr("stroke", "black")
-            .attr("stroke-width", 0.5);
+            .attr("stroke-width", 0.5)
+            .attr("stroke-opacity", 0.5); // Slight transparency for layering
 
-        // Update current image (simulate string)
+        // Update current image
         const pixels = getLinePixels(
             nailPositions[currentNail].x,
             nailPositions[currentNail].y,
@@ -154,15 +174,17 @@ async function generateStringArt() {
         );
         pixels.forEach(([px, py]) => {
             const idx = (Math.floor(py) * width + Math.floor(px)) * 4;
-            currentImage[idx] = Math.max(0, (currentImage[idx] || 255) - 10); // Darken
-            currentImage[idx + 1] = currentImage[idx]; // G
-            currentImage[idx + 2] = currentImage[idx]; // B
-            currentImage[idx + 3] = 255; // Alpha
+            currentImage[idx] = Math.max(0, (currentImage[idx] || 255) - darkeningAmount);
+            currentImage[idx + 1] = currentImage[idx];
+            currentImage[idx + 2] = currentImage[idx];
+            currentImage[idx + 3] = 255;
         });
 
         nailSequence.push([currentNail, bestNail]);
         currentNail = bestNail;
+        console.log(`Added line ${i + 1}`); // For debugging
     }
+    status.textContent = `Generation complete! ${nailSequence.length} lines added.`;
 }
 
 function downloadNailSequence() {
