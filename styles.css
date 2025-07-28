@@ -1,14 +1,35 @@
 body {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    background-color: #f0f0f0;
-}
-h1 {
+    font-family: 'Roboto', sans-serif;
+    background-color: #f4f7fa;
     color: #333;
+    margin: 0;
+    padding: 20px;
+    text-align: center;
 }
+
+header {
+    margin-bottom: 20px;
+}
+
+h1 {
+    font-size: 2em;
+    color: #4a4a4a;
+}
+
+h2 {
+    font-size: 1.2em;
+    margin-bottom: 10px;
+    color: #666;
+}
+
 #controls {
-    margin: 20px;
+    margin-bottom: 20px;
 }
+
+input[type="file"] {
+    margin-right: 10px;
+}
+
 button {
     padding: 10px 20px;
     margin: 5px;
@@ -17,11 +38,54 @@ button {
     border: none;
     border-radius: 5px;
     cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.3s, box-shadow 0.3s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
+
 button:hover {
     background-color: #3700b3;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
-#output {
-    border: 1px solid #ccc;
+
+#content {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+#preview-container, #output-container {
     background-color: white;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+}
+
+#preview {
+    width: 250px;
+    height: 250px;
+    object-fit: contain;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+#output {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: white;
+}
+
+#status {
+    margin-top: 10px;
+    font-style: italic;
+    color: #888;
+}
+
+@media (max-width: 768px) {
+    #content {
+        flex-direction: column;
+        align-items: center;
+    }
 }
