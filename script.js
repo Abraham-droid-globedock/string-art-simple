@@ -36,8 +36,9 @@ const status = document.getElementById("status");
 const width = 500;
 const height = 500;
 const nails = 100; // Number of nails on circular frame
-const maxLines = 2000; // Increased for fuller images
-const darkeningAmount = 1; // Smaller for more layers
+const maxLines = 2000; // Maximum string connections
+const downscaleFactor = 5; // Downscale to 100x100 for simplicity
+const darkeningAmount = 1; // Small change per line
 let nailSequence = [];
 
 function generateNailPositions() {
@@ -59,37 +60,43 @@ function loadImage(file) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
-            canvas.width = width;
-            canvas.height = height;
-            ctx.drawImage(img, 0, 0, width, height);
-            const imageData = ctx.getImageData(0, 0, width, height);
-            // Convert to grayscale for simplicity
-            for (let i = 0; i < imageData.data.length; i += 4) {
-                const gray = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
-                imageData.data[i] = imageData.data[i + 1] = imageData.data[i + 2] = gray;
+            // Downscale to 100x100
+            const smallCanvas = document.createElement("canvas");
+            smallCanvas.width = width / downscaleFactor;
+            smallCanvas.height = height / downscaleFactor;
+            const smallCtx = smallCanvas.getContext("2d");
+            smallCtx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
+            const smallImageData = smallCtx.getImageData(0, 0, smallCanvas.width, smallCanvas.height);
+            // Convert to grayscale
+            for (let i = 0; i < smallImageData.data.length; i += 4) {
+                const gray = (smallImageData.data[i] + smallImageData.data[i + 1] + smallImageData.data[i + 2]) / 3;
+                smallImageData.data[i] = smallImageData.data[i + 1] = smallImageData.data[i + 2] = gray;
             }
-            resolve(imageData);
+            resolve(smallImageData);
         };
         img.src = URL.createObjectURL(file);
     });
 }
 
 function calculateDelta(imageData, line, currentImage) {
-    // Calculate delta error improvement along the line
+    // Calculate delta error improvement with downscaled image
     let delta = 0;
-    const pixels = getLinePixels(line.x0, line.y0, line.x1, line.y1);
+    const pixels = getLinePixels(line.x0, line.y0, line.x1, line.y1, downscaleFactor);
+    const scale = downscaleFactor;
     pixels.forEach(([px, py]) => {
-        const idx = (Math.floor(py) * width + Math.floor(px)) * 4;
-        const original = imageData.data[idx]; // Grayscale value (0 dark, 255 light)
-        const current = currentImage[idx] || 255;
-        const newValue = Math.max(0, current - darkeningAmount);
-        const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
-        delta += Math.min(0, improvement); // Ignore worsenings
+        const idx = (Math.floor(py / scale) * (width / scale) + Math.floor(px / scale)) * 4;
+        if (idx >= 0 && idx < currentImage.length) {
+            const original = imageData.data[idx]; // Grayscale value (0 dark, 255 light)
+            const current = currentImage[idx] || 255;
+            const newValue = Math.max(0, current - darkeningAmount);
+            const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
+            delta += Math.min(0, improvement) * (1 - original / 255); // Weight by darkness
+        }
     });
-    return delta;
+    return delta / (pixels.length || 1); // Normalize by line length
 }
 
-function getLinePixels(x0, y0, x1, y1) {
+function getLinePixels(x0, y0, x1, y1, scale) {
     const pixels = [];
     const dx = Math.abs(x1 - x0);
     const dy = Math.abs(y1 - y0);
@@ -104,7 +111,32 @@ function getLinePixels(x0, y0, x1, y1) {
         if (e2 > -dy) { err -= dy; x += sx; }
         if (e2 < dx) { err += dx; y += sy; }
     }
-    return pixels;
+    return pixels.map(([x, y]) => [x * scale, y * scale]); // Scale back to original size
+}
+
+function hasOverlap(newLine, existingLines, threshold = 5) {
+    // Check if new line overlaps significantly with existing lines
+    for (let [from, to] of existingLines) {
+        const line1 = { x0: nailPositions[from].x, y0: nailPositions[from].y, x1: nailPositions[to].x, y1: nailPositions[to].y };
+        const line2 = newLine;
+        const dist = Math.min(
+            distanceToLineSegment(line1, { x: line2.x0, y: line2.y0 }),
+            distanceToLineSegment(line1, { x: line2.x1, y: line2.y1 })
+        );
+        if (dist < threshold) return true;
+    }
+    return false;
+}
+
+function distanceToLineSegment(line, point) {
+    // Simplified distance from point to line segment
+    const { x0, y0, x1, y1 } = line;
+    const l2 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+    if (l2 === 0) return Math.hypot(point.x - x0, point.y - y0);
+    let t = Math.max(0, Math.min(1, ((point.x - x0) * (x1 - x0) + (point.y - y0) * (y1 - y0)) / l2));
+    let px = x0 + t * (x1 - x0);
+    let py = y0 + t * (y1 - y0);
+    return Math.hypot(point.x - px, point.y - py);
 }
 
 async function generateStringArt() {
@@ -115,13 +147,11 @@ async function generateStringArt() {
     }
 
     status.textContent = "Generating...";
-    // Clear previous output
     svg.selectAll("*").remove();
     nailSequence = [];
 
-    // Load and process image
     const imageData = await loadImage(file);
-    const currentImage = new Uint8ClampedArray(width * height * 4).fill(255); // White background
+    const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(255);
     const nailPositions = generateNailPositions();
 
     // Draw nails
@@ -134,10 +164,10 @@ async function generateStringArt() {
         .attr("r", 2)
         .attr("fill", "black");
 
-    // Generate string art
-    let currentNail = 0;
+    // Generate string art with random start
+    let currentNail = Math.floor(Math.random() * nails);
     for (let i = 0; i < maxLines; i++) {
-        let minDelta = 0; // Start at 0, since we want negative deltas
+        let minDelta = 0;
         let bestNail = -1;
         for (let j = 0; j < nails; j++) {
             if (j === currentNail) continue;
@@ -147,42 +177,44 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
+            if (hasOverlap(line, nailSequence.map(([from, to]) => [from, to]))) continue; // Skip overlapping lines
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
                 bestNail = j;
             }
         }
-        if (bestNail === -1 || minDelta >= 0) break; // Stop if no improvement
+        if (bestNail === -1 || minDelta >= -0.1) break; // Stop if no significant improvement
 
-        // Draw line
+        const newLine = {
+            x0: nailPositions[currentNail].x,
+            y0: nailPositions[currentNail].y,
+            x1: nailPositions[bestNail].x,
+            y1: nailPositions[bestNail].y
+        };
         svg.append("line")
-            .attr("x1", nailPositions[currentNail].x)
-            .attr("y1", nailPositions[currentNail].y)
-            .attr("x2", nailPositions[bestNail].x)
-            .attr("y2", nailPositions[bestNail].y)
+            .attr("x1", newLine.x0)
+            .attr("y1", newLine.y0)
+            .attr("x2", newLine.x1)
+            .attr("y2", newLine.y1)
             .attr("stroke", "black")
             .attr("stroke-width", 0.5)
-            .attr("stroke-opacity", 0.5); // Slight transparency for layering
+            .attr("stroke-opacity", 0.5);
 
-        // Update current image
-        const pixels = getLinePixels(
-            nailPositions[currentNail].x,
-            nailPositions[currentNail].y,
-            nailPositions[bestNail].x,
-            nailPositions[bestNail].y
-        );
+        const pixels = getLinePixels(newLine.x0, newLine.y0, newLine.x1, newLine.y1, downscaleFactor);
         pixels.forEach(([px, py]) => {
-            const idx = (Math.floor(py) * width + Math.floor(px)) * 4;
-            currentImage[idx] = Math.max(0, (currentImage[idx] || 255) - darkeningAmount);
-            currentImage[idx + 1] = currentImage[idx];
-            currentImage[idx + 2] = currentImage[idx];
-            currentImage[idx + 3] = 255;
+            const idx = (Math.floor(py / downscaleFactor) * (width / downscaleFactor) + Math.floor(px / downscaleFactor)) * 4;
+            if (idx >= 0 && idx < currentImage.length) {
+                currentImage[idx] = Math.max(0, (currentImage[idx] || 255) - darkeningAmount);
+                currentImage[idx + 1] = currentImage[idx];
+                currentImage[idx + 2] = currentImage[idx];
+                currentImage[idx + 3] = 255;
+            }
         });
 
         nailSequence.push([currentNail, bestNail]);
         currentNail = bestNail;
-        console.log(`Added line ${i + 1}`); // For debugging
+        console.log(`Added line ${i + 1}`);
     }
     status.textContent = `Generation complete! ${nailSequence.length} lines added.`;
 }
