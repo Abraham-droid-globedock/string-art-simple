@@ -38,13 +38,13 @@ const height = 500;
 const nails = 100; // Number of nails on circular frame
 const maxLines = 2000; // Maximum string connections
 const downscaleFactor = 5; // Downscale to 100x100 for simplicity
-const darkeningAmount = 1; // Small change per line
+const darkeningAmount = 2; // Increased for visible effect
 let nailSequence = [];
-let nailPositions = []; // Moved to global scope
+let nailPositions = [];
 
 function generateNailPositions() {
     const positions = [];
-    const radius = width / 2 - 10; // Slight inset for visibility
+    const radius = width / 2 - 10;
     const centerX = width / 2;
     const centerY = height / 2;
     for (let i = 0; i < nails; i++) {
@@ -61,17 +61,16 @@ function loadImage(file) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
-            // Downscale to 100x100
             const smallCanvas = document.createElement("canvas");
             smallCanvas.width = width / downscaleFactor;
             smallCanvas.height = height / downscaleFactor;
             const smallCtx = smallCanvas.getContext("2d");
             smallCtx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
             const smallImageData = smallCtx.getImageData(0, 0, smallCanvas.width, smallCanvas.height);
-            // Convert to grayscale
+            // Convert to grayscale and invert (dark areas = low values)
             for (let i = 0; i < smallImageData.data.length; i += 4) {
                 const gray = (smallImageData.data[i] + smallImageData.data[i + 1] + smallImageData.data[i + 2]) / 3;
-                smallImageData.data[i] = smallImageData.data[i + 1] = smallImageData.data[i + 2] = gray;
+                smallImageData.data[i] = smallImageData.data[i + 1] = smallImageData.data[i + 2] = 255 - gray; // Invert
             }
             resolve(smallImageData);
         };
@@ -86,14 +85,14 @@ function calculateDelta(imageData, line, currentImage) {
     pixels.forEach(([px, py]) => {
         const idx = (Math.floor(py / scale) * (width / scale) + Math.floor(px / scale)) * 4;
         if (idx >= 0 && idx < currentImage.length) {
-            const original = imageData.data[idx];
-            const current = currentImage[idx] || 255;
-            const newValue = Math.max(0, current - darkeningAmount);
+            const original = imageData.data[idx]; // Inverted: dark = high value
+            const current = currentImage[idx] || 0; // Start at 0 (white)
+            const newValue = Math.min(255, current + darkeningAmount); // Add darkness
             const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
-            delta += Math.min(0, improvement) * (1 - original / 255); // Weight by darkness
+            delta += Math.min(0, improvement); // Focus on improvements
         }
     });
-    return delta / (pixels.length || 1); // Normalize by line length
+    return delta / (pixels.length || 1); // Normalize
 }
 
 function getLinePixels(x0, y0, x1, y1, scale) {
@@ -111,11 +110,10 @@ function getLinePixels(x0, y0, x1, y1, scale) {
         if (e2 > -dy) { err -= dy; x += sx; }
         if (e2 < dx) { err += dx; y += sy; }
     }
-    return pixels.map(([x, y]) => [x * scale, y * scale]); // Scale back to original size
+    return pixels.map(([x, y]) => [x * scale, y * scale]);
 }
 
-function hasOverlap(newLine, existingLines, positions, threshold = 5) {
-    // Check if new line overlaps significantly with existing lines
+function hasOverlap(newLine, existingLines, positions, threshold = 10) {
     for (let [from, to] of existingLines) {
         const line1 = { x0: positions[from].x, y0: positions[from].y, x1: positions[to].x, y1: positions[to].y };
         const line2 = newLine;
@@ -147,11 +145,11 @@ async function generateStringArt() {
 
     status.textContent = "Generating...";
     svg.selectAll("*").remove();
-    nailSequence = [];
-    nailPositions = generateNailPositions(); // Initialize here
+    nailSequence = []; // Reset
+    nailPositions = generateNailPositions();
 
     const imageData = await loadImage(file);
-    const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(255);
+    const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(0); // Black background
 
     // Draw nails
     svg.selectAll("circle")
@@ -163,8 +161,9 @@ async function generateStringArt() {
         .attr("r", 2)
         .attr("fill", "black");
 
-    // Generate string art with random start
+    // Generate string art
     let currentNail = Math.floor(Math.random() * nails);
+    let linesAdded = 0;
     for (let i = 0; i < maxLines; i++) {
         let minDelta = 0;
         let bestNail = -1;
@@ -176,15 +175,16 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            if (hasOverlap(line, nailSequence, nailPositions)) continue; // Skip overlapping lines
+            // Relaxed overlap check
+            if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
                 bestNail = j;
             }
         }
-        if (bestNail === -1 || minDelta >= -0.1) {
-            console.log(`Stopped at line ${i + 1} due to no improvement`);
+        if (bestNail === -1 || minDelta >= -0.5) {
+            console.log(`Stopped at line ${linesAdded} due to no improvement (minDelta: ${minDelta})`);
             break;
         }
 
@@ -207,7 +207,7 @@ async function generateStringArt() {
         pixels.forEach(([px, py]) => {
             const idx = (Math.floor(py / downscaleFactor) * (width / downscaleFactor) + Math.floor(px / downscaleFactor)) * 4;
             if (idx >= 0 && idx < currentImage.length) {
-                currentImage[idx] = Math.max(0, (currentImage[idx] || 255) - darkeningAmount);
+                currentImage[idx] = Math.min(255, (currentImage[idx] || 0) + darkeningAmount);
                 currentImage[idx + 1] = currentImage[idx];
                 currentImage[idx + 2] = currentImage[idx];
                 currentImage[idx + 3] = 255;
@@ -216,9 +216,10 @@ async function generateStringArt() {
 
         nailSequence.push([currentNail, bestNail]);
         currentNail = bestNail;
-        console.log(`Added line ${i + 1}`);
+        linesAdded++;
+        console.log(`Added line ${linesAdded} (from ${currentNail} to ${bestNail})`);
     }
-    status.textContent = `Generation complete! ${nailSequence.length} lines added.`;
+    status.textContent = `Generation complete! ${linesAdded} lines added.`;
 }
 
 function downloadNailSequence() {
