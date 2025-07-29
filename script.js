@@ -67,10 +67,10 @@ function loadImage(file) {
             const smallCtx = smallCanvas.getContext("2d");
             smallCtx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
             const smallImageData = smallCtx.getImageData(0, 0, smallCanvas.width, smallCanvas.height);
-            // Convert to grayscale and invert (dark areas = low values)
+            // Convert to grayscale and invert (dark areas = high values)
             for (let i = 0; i < smallImageData.data.length; i += 4) {
                 const gray = (smallImageData.data[i] + smallImageData.data[i + 1] + smallImageData.data[i + 2]) / 3;
-                smallImageData.data[i] = smallImageData.data[i + 1] = smallImageData.data[i + 2] = 255 - gray; // Invert
+                smallImageData.data[i] = smallImageData.data[i + 1] = smallImageData.data[i + 2] = 255 - gray;
             }
             resolve(smallImageData);
         };
@@ -87,12 +87,12 @@ function calculateDelta(imageData, line, currentImage) {
         if (idx >= 0 && idx < currentImage.length) {
             const original = imageData.data[idx]; // Inverted: dark = high value
             const current = currentImage[idx] || 0; // Start at 0 (white)
-            const newValue = Math.min(255, current + darkeningAmount); // Add darkness
+            const newValue = Math.min(255, current + darkeningAmount);
             const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
             delta += Math.min(0, improvement); // Focus on improvements
         }
     });
-    return delta / (pixels.length || 1); // Normalize
+    return delta; // Removed normalization to test
 }
 
 function getLinePixels(x0, y0, x1, y1, scale) {
@@ -145,11 +145,11 @@ async function generateStringArt() {
 
     status.textContent = "Generating...";
     svg.selectAll("*").remove();
-    nailSequence = []; // Reset
+    nailSequence = [];
     nailPositions = generateNailPositions();
 
     const imageData = await loadImage(file);
-    const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(0); // Black background
+    const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(0);
 
     // Draw nails
     svg.selectAll("circle")
@@ -167,23 +167,26 @@ async function generateStringArt() {
     for (let i = 0; i < maxLines; i++) {
         let minDelta = 0;
         let bestNail = -1;
+        let candidates = 0;
         for (let j = 0; j < nails; j++) {
             if (j === currentNail) continue;
+            candidates++;
             const line = {
                 x0: nailPositions[currentNail].x,
                 y0: nailPositions[currentNail].y,
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            // Relaxed overlap check
-            if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
+            // Temporarily disable overlap check
+            // if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
                 bestNail = j;
             }
         }
-        if (bestNail === -1 || minDelta >= -0.5) {
+        console.log(`Iteration ${i}: Candidates ${candidates}, Best Delta ${minDelta}, Best Nail ${bestNail}`);
+        if (bestNail === -1 || minDelta >= -0.1) { // Relaxed threshold
             console.log(`Stopped at line ${linesAdded} due to no improvement (minDelta: ${minDelta})`);
             break;
         }
