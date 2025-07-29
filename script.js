@@ -36,11 +36,10 @@ const status = document.getElementById("status");
 const width = 500;
 const height = 500;
 const nails = 100; // Number of nails on circular frame
-const maxLines = 1000; // Reduced to avoid clutter
+const maxLines = 1000; // Target for full pattern
 const downscaleFactor = 5; // Downscale to 100x100
-const darkeningAmount = 5; // Increased for visible effect
-let nailSequence = [];
-let nailPositions = [];
+const darkeningAmount = 5; // Visible effect per line
+let nailPositions = []; // Initialize globally but set in function
 
 function generateNailPositions() {
     const positions = [];
@@ -90,8 +89,8 @@ function calculateDelta(imageData, line, currentImage) {
             const current = currentImage[idx] || 0; // Start at 0 (white)
             const newValue = Math.min(255, current + darkeningAmount);
             const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
-            // Weight by original intensity (favor dark areas) and gradient-like effect
-            const weight = original / 255; // Higher weight where image is dark
+            // Weight by original intensity and unsaturation
+            const weight = (original / 255) * (1 - current / 255); // Favor dark, unsaturated areas
             delta += Math.min(0, improvement) * weight;
             totalWeight += weight;
         }
@@ -117,7 +116,7 @@ function getLinePixels(x0, y0, x1, y1, scale) {
     return pixels.map(([x, y]) => [x * scale, y * scale]);
 }
 
-function hasOverlap(newLine, existingLines, positions, threshold = 15) {
+function hasOverlap(newLine, existingLines, positions, threshold = 25) {
     for (let [from, to] of existingLines) {
         const line1 = { x0: positions[from].x, y0: positions[from].y, x1: positions[to].x, y1: positions[to].y };
         const line2 = newLine;
@@ -150,7 +149,7 @@ async function generateStringArt() {
     status.textContent = "Generating...";
     svg.selectAll("*").remove();
     nailSequence = [];
-    nailPositions = generateNailPositions();
+    nailPositions = generateNailPositions(); // Reinitialize each time
 
     const imageData = await loadImage(file);
     const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(0);
@@ -181,8 +180,8 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            // Reintroduce relaxed overlap check
-            if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
+            // Delay overlap check to 200 lines
+            if (linesAdded > 200 && hasOverlap(line, nailSequence, nailPositions)) continue;
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
