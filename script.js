@@ -40,6 +40,7 @@ const maxLines = 2000; // Maximum string connections
 const downscaleFactor = 5; // Downscale to 100x100 for simplicity
 const darkeningAmount = 1; // Small change per line
 let nailSequence = [];
+let nailPositions = []; // Moved to global scope
 
 function generateNailPositions() {
     const positions = [];
@@ -79,14 +80,13 @@ function loadImage(file) {
 }
 
 function calculateDelta(imageData, line, currentImage) {
-    // Calculate delta error improvement with downscaled image
     let delta = 0;
     const pixels = getLinePixels(line.x0, line.y0, line.x1, line.y1, downscaleFactor);
     const scale = downscaleFactor;
     pixels.forEach(([px, py]) => {
         const idx = (Math.floor(py / scale) * (width / scale) + Math.floor(px / scale)) * 4;
         if (idx >= 0 && idx < currentImage.length) {
-            const original = imageData.data[idx]; // Grayscale value (0 dark, 255 light)
+            const original = imageData.data[idx];
             const current = currentImage[idx] || 255;
             const newValue = Math.max(0, current - darkeningAmount);
             const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
@@ -114,10 +114,10 @@ function getLinePixels(x0, y0, x1, y1, scale) {
     return pixels.map(([x, y]) => [x * scale, y * scale]); // Scale back to original size
 }
 
-function hasOverlap(newLine, existingLines, threshold = 5) {
+function hasOverlap(newLine, existingLines, positions, threshold = 5) {
     // Check if new line overlaps significantly with existing lines
     for (let [from, to] of existingLines) {
-        const line1 = { x0: nailPositions[from].x, y0: nailPositions[from].y, x1: nailPositions[to].x, y1: nailPositions[to].y };
+        const line1 = { x0: positions[from].x, y0: positions[from].y, x1: positions[to].x, y1: positions[to].y };
         const line2 = newLine;
         const dist = Math.min(
             distanceToLineSegment(line1, { x: line2.x0, y: line2.y0 }),
@@ -129,7 +129,6 @@ function hasOverlap(newLine, existingLines, threshold = 5) {
 }
 
 function distanceToLineSegment(line, point) {
-    // Simplified distance from point to line segment
     const { x0, y0, x1, y1 } = line;
     const l2 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
     if (l2 === 0) return Math.hypot(point.x - x0, point.y - y0);
@@ -149,10 +148,10 @@ async function generateStringArt() {
     status.textContent = "Generating...";
     svg.selectAll("*").remove();
     nailSequence = [];
+    nailPositions = generateNailPositions(); // Initialize here
 
     const imageData = await loadImage(file);
     const currentImage = new Uint8ClampedArray((width / downscaleFactor) * (height / downscaleFactor) * 4).fill(255);
-    const nailPositions = generateNailPositions();
 
     // Draw nails
     svg.selectAll("circle")
@@ -177,14 +176,17 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            if (hasOverlap(line, nailSequence.map(([from, to]) => [from, to]))) continue; // Skip overlapping lines
+            if (hasOverlap(line, nailSequence, nailPositions)) continue; // Skip overlapping lines
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
                 bestNail = j;
             }
         }
-        if (bestNail === -1 || minDelta >= -0.1) break; // Stop if no significant improvement
+        if (bestNail === -1 || minDelta >= -0.1) {
+            console.log(`Stopped at line ${i + 1} due to no improvement`);
+            break;
+        }
 
         const newLine = {
             x0: nailPositions[currentNail].x,
