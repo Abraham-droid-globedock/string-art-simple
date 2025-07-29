@@ -36,9 +36,9 @@ const status = document.getElementById("status");
 const width = 500;
 const height = 500;
 const nails = 100; // Number of nails on circular frame
-const maxLines = 2000; // Maximum string connections
-const downscaleFactor = 5; // Downscale to 100x100 for simplicity
-const darkeningAmount = 2; // Increased for visible effect
+const maxLines = 1000; // Reduced to avoid clutter
+const downscaleFactor = 5; // Downscale to 100x100
+const darkeningAmount = 5; // Increased for visible effect
 let nailSequence = [];
 let nailPositions = [];
 
@@ -82,6 +82,7 @@ function calculateDelta(imageData, line, currentImage) {
     let delta = 0;
     const pixels = getLinePixels(line.x0, line.y0, line.x1, line.y1, downscaleFactor);
     const scale = downscaleFactor;
+    let totalWeight = 0;
     pixels.forEach(([px, py]) => {
         const idx = (Math.floor(py / scale) * (width / scale) + Math.floor(px / scale)) * 4;
         if (idx >= 0 && idx < currentImage.length) {
@@ -89,10 +90,13 @@ function calculateDelta(imageData, line, currentImage) {
             const current = currentImage[idx] || 0; // Start at 0 (white)
             const newValue = Math.min(255, current + darkeningAmount);
             const improvement = Math.pow(original - newValue, 2) - Math.pow(original - current, 2);
-            delta += Math.min(0, improvement); // Focus on improvements
+            // Weight by original intensity (favor dark areas) and gradient-like effect
+            const weight = original / 255; // Higher weight where image is dark
+            delta += Math.min(0, improvement) * weight;
+            totalWeight += weight;
         }
     });
-    return delta; // Removed normalization to test
+    return totalWeight > 0 ? delta / totalWeight : delta; // Weighted average
 }
 
 function getLinePixels(x0, y0, x1, y1, scale) {
@@ -113,7 +117,7 @@ function getLinePixels(x0, y0, x1, y1, scale) {
     return pixels.map(([x, y]) => [x * scale, y * scale]);
 }
 
-function hasOverlap(newLine, existingLines, positions, threshold = 10) {
+function hasOverlap(newLine, existingLines, positions, threshold = 15) {
     for (let [from, to] of existingLines) {
         const line1 = { x0: positions[from].x, y0: positions[from].y, x1: positions[to].x, y1: positions[to].y };
         const line2 = newLine;
@@ -177,17 +181,17 @@ async function generateStringArt() {
                 x1: nailPositions[j].x,
                 y1: nailPositions[j].y
             };
-            // Temporarily disable overlap check
-            // if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
+            // Reintroduce relaxed overlap check
+            if (linesAdded > 100 && hasOverlap(line, nailSequence, nailPositions)) continue;
             const delta = calculateDelta(imageData, line, currentImage);
             if (delta < minDelta) {
                 minDelta = delta;
                 bestNail = j;
             }
         }
-        console.log(`Iteration ${i}: Candidates ${candidates}, Best Delta ${minDelta}, Best Nail ${bestNail}`);
-        if (bestNail === -1 || minDelta >= -0.1) { // Relaxed threshold
-            console.log(`Stopped at line ${linesAdded} due to no improvement (minDelta: ${minDelta})`);
+        console.log(`Iteration ${i}: Candidates ${candidates}, Best Delta ${minDelta.toFixed(2)}, Best Nail ${bestNail}`);
+        if (bestNail === -1) {
+            console.log(`Stopped at line ${linesAdded} due to no candidates`);
             break;
         }
 
